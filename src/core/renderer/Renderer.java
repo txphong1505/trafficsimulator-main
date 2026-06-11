@@ -312,8 +312,6 @@ public class Renderer {
                     case EAST: px = inter.x - 50; py = roadStartY + roadWidth + 25; break;
                     case WEST:
                         if (inter.type.equals("5way")) {
-                            // Đèn WEST (Điều khiển xe đi thẳng từ phải sang trái)
-                            // Đặt chính xác vào bãi cỏ tam giác (vùng khoanh đỏ của bạn)
                             px = inter.x + roadWidth + 90;
                             py = roadStartY - 70;
                         } else {
@@ -323,10 +321,10 @@ public class Renderer {
                     case SOUTH: px = inter.x - 50; py = roadStartY - 110; break;
                     case NORTH: px = inter.x + roadWidth + 20; py = roadStartY + roadWidth + 25; break;
                     case SOUTHWEST:
-                        // Đèn SOUTHWEST (Điều khiển xe đi từ đường chéo xuống)
-                        // Đặt ở bãi cỏ phía trên đường chéo
                         px = inter.x + roadWidth + 20;
                         py = roadStartY - 110;
+                        break;
+                    default:
                         break;
                 }
                 drawTrafficLightPole(g2d, inter.light, px, py, dir, inter.type);

@@ -1,5 +1,4 @@
-package core; // (Hãy sửa lại tên package nếu dự án của bạn khác)
-
+package core; 
 import core.controller.TrafficController;
 import core.environment.Intersection;
 import core.environment.TrafficLight;

@@ -570,20 +570,6 @@ public class TrafficController {
         return null;
     }
 
-    private void snapToStopLine(Vehicle v, Intersection inter) {
-        int stopDist = 65, westStopDist = 95;
-        Direction d = v.getDirection();
-
-        if (d == Direction.EAST) v.setX(inter.x - stopDist - v.getBodyWidth());
-        else if (d == Direction.WEST) v.setX(inter.x + roadWidth + westStopDist);
-        else if (d == Direction.SOUTH) v.setY(roadStartY - stopDist - v.getBodyHeight());
-        else if (d == Direction.NORTH) v.setY(roadStartY + roadWidth + stopDist);
-        else if (d == Direction.SOUTHWEST && inter.type.equals("5way")) {
-            int cx = inter.x + roadWidth / 2, cy = roadStartY + roadWidth / 2;
-            double stopX = cx + 200;
-            v.setX(stopX); v.setY(cy - (stopX - cx) - 85);
-        }
-    }
 
     private boolean isIntersectionClear(Vehicle currentV, Intersection inter) {
         if (inter.type.equals("4way") || inter.type.equals("5way")) return true;
