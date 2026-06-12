@@ -931,6 +931,20 @@ public class TrafficController {
         return vehicles;
     }
 
+    /**
+     * Reset all mutable controller state without touching the intersection list.
+     * Clears vehicles, resets the tick counter, lane-change cooldowns, and the
+     * justYielded set. Useful for DiagnosticRunner headless reruns and for any
+     * future scenario where a soft-reset (same intersections, fresh traffic) is
+     * preferred over full reinstantiation.
+     */
+    public void reset() {
+        vehicles.clear();
+        ticks = 0;
+        laneChangeCooldown.clear();
+        justYielded.clear();
+    }
+
     // Used by DiagnosticRunner to distinguish red-light stops from obstacle
     // deadlocks.
     public boolean isWaitingForLight(Vehicle v) {

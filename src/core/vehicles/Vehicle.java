@@ -11,6 +11,7 @@ import javax.imageio.ImageIO;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -82,8 +83,40 @@ public abstract class Vehicle {
         }
     }
 
-    public void draw(Graphics2D g2d) {
+    /**
+     * Draw this vehicle.
+     *
+     * @param g2d              the Graphics2D context (already scaled by Main's global transform)
+     * @param intersectionBoxes pre-computed intersection bounding boxes (inter.x, roadStartY,
+     *                          roadWidth, roadWidth); used in BASIC mode to trigger visual scale.
+     *                          May be null or empty — treated as "no intersection".
+     */
+    public void draw(Graphics2D g2d, List<Rectangle> intersectionBoxes) {
         if (!graphicMode) {
+            // ── BASIC MODE ───────────────────────────────────────────────────────────
+            // Feature 1: scale up visually when inside an intersection.
+            // Physics (x, y, getBodyWidth/Height, hitboxes) are NEVER modified.
+            boolean inIntersection = false;
+            if (intersectionBoxes != null) {
+                for (Rectangle box : intersectionBoxes) {
+                    if (box.intersects(getHitbox())) {
+                        inIntersection = true;
+                        break;
+                    }
+                }
+            }
+
+            AffineTransform old = g2d.getTransform();
+            if (inIntersection) {
+                // Scale 1.35× around the vehicle's body centre — same save/restore
+                // pattern used for sprite rotation in GRAPHIC mode below.
+                double cx = x + getBodyWidth() / 2.0;
+                double cy = y + getBodyHeight() / 2.0;
+                g2d.translate(cx, cy);
+                g2d.scale(1.35, 1.35);
+                g2d.translate(-cx, -cy);
+            }
+
             int bw = getBodyWidth(), bh = getBodyHeight();
             g2d.setColor(color);
             g2d.fillRect((int) x, (int) y, bw, bh);
@@ -95,9 +128,12 @@ public abstract class Vehicle {
             int tx = (int) x + (bw - fm.stringWidth(name)) / 2;
             int ty = (int) y + (bh + fm.getAscent() - fm.getDescent()) / 2;
             g2d.drawString(name, tx, ty);
+
+            g2d.setTransform(old); // always restore, whether we scaled or not
             return;
         }
 
+        // ── GRAPHIC MODE ─────────────────────────────────────────────────────────
         loadSprite(name);
         BufferedImage sprite = spriteCache.get(name);
         int imgW = 32, imgH = 55;
