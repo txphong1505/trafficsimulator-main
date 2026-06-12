@@ -606,29 +606,54 @@ public class TrafficController {
         return true;
     }
 
-    // Checks if the vehicle is within the original tight physical stop zone (65px from the
-    // line). This is separate from getApproachingIntersection which uses a wider range for
-    // queue-awareness and tryOvertake suppression.
+    // Returns true only when the vehicle's front bumper is within its own braking window
+    // of the physical stop line. The window is kept minimal (speed*2 + 10 px) so that only
+    // the vehicle that is actually AT the line brakes for the light; rear-queue vehicles
+    // are held by checkSafeDistance behind the stopped leader instead.
     private boolean isInStopZone(Vehicle v, Intersection inter) {
         Direction d = v.getDirection();
         double frontX = v.getX(), frontY = v.getY();
         if (d == Direction.EAST)  frontX += v.getBodyWidth();
         else if (d == Direction.SOUTH) frontY += v.getBodyHeight();
+        // NORTH front bumper is the top edge  → frontY = v.getY()  (no addition needed)
+        // WEST  front bumper is the left edge → frontX = v.getX()  (no addition needed)
 
-        int tightStop = 65, tightWest = 95, overshoot = 30;
-        if (d == Direction.EAST      && frontX >= inter.x - tightStop              && frontX <= inter.x + overshoot) return true;
-        if (d == Direction.WEST      && frontX <= inter.x + roadWidth + tightWest  && frontX >= inter.x + roadWidth - overshoot) return true;
-        if (d == Direction.SOUTH     && v.getX() >= inter.x && v.getX() <= inter.x + roadWidth
-                                     && frontY >= roadStartY - tightStop           && frontY <= roadStartY + overshoot) return true;
-        if (d == Direction.NORTH     && v.getX() >= inter.x && v.getX() <= inter.x + roadWidth
-                                     && frontY <= roadStartY + roadWidth + tightStop && frontY >= roadStartY + roadWidth - overshoot) return true;
+        // Minimal one-tick lookahead: the zone fires exactly one speed-step before the stop
+        // line, so the vehicle brakes on the same tick its front bumper would cross the line.
+        // Both buf and overshoot are bounded to speed+1 px, keeping the stopping error < 1 px.
+        int buf = (int)(v.getOriginalSpeed()) + 1;
+        int overshoot = (int)(v.getOriginalSpeed()) + 1;
+
+        if (d == Direction.EAST) {
+            // Stop line = left edge of intersection box
+            double stopLine = inter.x;
+            return frontX >= stopLine - buf && frontX <= stopLine + overshoot;
+        }
+        if (d == Direction.WEST) {
+            // Stop line = right edge of intersection box
+            double stopLine = inter.x + roadWidth;
+            return frontX <= stopLine + buf && frontX >= stopLine - overshoot;
+        }
+        if (d == Direction.SOUTH) {
+            if (v.getX() < inter.x || v.getX() > inter.x + roadWidth) return false;
+            // Stop line = top edge of intersection box
+            double stopLine = roadStartY;
+            return frontY >= stopLine - buf && frontY <= stopLine + overshoot;
+        }
+        if (d == Direction.NORTH) {
+            if (v.getX() < inter.x || v.getX() > inter.x + roadWidth) return false;
+            // Stop line = bottom edge of intersection box (vehicle moves upward)
+            double stopLine = roadStartY + roadWidth;
+            return frontY <= stopLine + buf && frontY >= stopLine - overshoot;
+        }
         if (d == Direction.SOUTHWEST && inter.type.equals("5way")) {
             int cx = inter.x + roadWidth / 2;
-            double targetStopX = cx + 200;
-            if (frontX <= targetStopX + tightStop && frontX >= targetStopX - overshoot) return true;
+            double stopLine = cx + 200;
+            return frontX <= stopLine + buf && frontX >= stopLine - overshoot;
         }
         return false;
     }
+
 
     private boolean canVehicleGo(Vehicle v) {
         Intersection approaching = getApproachingIntersection(v);
@@ -677,4 +702,11 @@ public class TrafficController {
     }
 
     public List<Vehicle> getVehicles() { return vehicles; }
-}
+
+    // Used by DiagnosticRunner to distinguish red-light stops from obstacle deadlocks.
+    public boolean isWaitingForLight(Vehicle v) {
+        Intersection approaching = getApproachingIntersection(v);
+        if (approaching == null) return false;
+        return isInStopZone(v, approaching) && !approaching.light.canGo(v.getDirection());
+    }
+}

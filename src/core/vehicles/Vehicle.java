@@ -196,8 +196,14 @@ public abstract class Vehicle {
     }
     // ====================================================================================
 
-    public int getBodyWidth()  { return (direction == Direction.EAST || direction == Direction.WEST) ? LENGTH : WIDTH; }
-    public int getBodyHeight() { return (direction == Direction.NORTH || direction == Direction.SOUTH) ? LENGTH : WIDTH; }
+    public int getBodyWidth()  {
+        if (direction == Direction.NORTHEAST || direction == Direction.SOUTHWEST) return LENGTH;
+        return (direction == Direction.EAST || direction == Direction.WEST) ? LENGTH : WIDTH;
+    }
+    public int getBodyHeight() {
+        if (direction == Direction.NORTHEAST || direction == Direction.SOUTHWEST) return WIDTH;
+        return (direction == Direction.NORTH || direction == Direction.SOUTH) ? LENGTH : WIDTH;
+    }
     public double getX()       { return x; }
     public double getY()       { return y; }
     public void setX(double x) { this.x = x; }
