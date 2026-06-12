@@ -275,10 +275,12 @@ public class TrafficController {
 
     public void executeTurn(Vehicle v) {
         v.setWaitingToTurn(false);
+        // ── 5-way diagonal turns (EAST→NE keep snap; SW→EXIT now smooth) ────────
         for (Intersection inter : intersections) {
             if (inter.type.equals("5way")) {
                 int cx = inter.x + roadWidth / 2;
                 int cy = roadStartY + roadWidth / 2;
+                // EAST → NORTHEAST (snap — geometry already fixed, keep as-is)
                 if (v.getDirection() == Direction.EAST && v.getTurnIntent().equals("DIAGONAL") && !v.hasTurned()) {
                     if (Math.abs(v.getX() - (cx - 30)) <= v.getOriginalSpeed() * 2) {
                         double ty = v.getY();
@@ -293,17 +295,19 @@ public class TrafficController {
                         }
                     }
                 }
-                if (v.getDirection() == Direction.SOUTHWEST && !v.hasTurned()) {
-                    if (Math.abs(v.getX() - (cx + 30)) <= v.getOriginalSpeed() * 2) {
+                // SOUTHWEST → WEST or SOUTH (smooth Bézier curve)
+                if (v.getDirection() == Direction.SOUTHWEST && !v.hasTurned() && !v.isTurning()) {
+                    if (Math.abs(v.getX() - (cx + 30)) <= v.getOriginalSpeed() * 5) {
                         Direction nextDir = new Random().nextBoolean() ? Direction.WEST : Direction.SOUTH;
-                        double tx = (nextDir == Direction.WEST) ? (cx - 40) : (inter.x + 64);
-                        double ty = (nextDir == Direction.WEST) ? WEST_LANE_FAST : (cy + 40);
-                        if (!isSpotOccupied(v, tx, ty)) {
-                            v.setX(tx);
-                            v.setY(ty);
-                            v.setDirection(nextDir);
-                            v.setHasTurned(true);
+                        // P2: 80 px past the original snap position, in the exit direction
+                        double p2x = (nextDir == Direction.WEST) ? cx - 120 : inter.x + 64;
+                        double p2y = (nextDir == Direction.WEST) ? WEST_LANE_FAST : cy + 120;
+                        double[] din  = dirVector(Direction.SOUTHWEST);
+                        double[] dout = dirVector(nextDir);
+                        double[] p1   = computeControlPoint(v.getX(), v.getY(), din, p2x, p2y, dout);
+                        if (!isSpotOccupied(v, (int) p2x, (int) p2y)) {
                             v.setWaitingToTurn(false);
+                            v.beginTurn(v.getX(), v.getY(), p1[0], p1[1], p2x, p2y, nextDir);
                         } else {
                             v.setWaitingToTurn(true);
                             v.setSpeed(0);
@@ -314,8 +318,9 @@ public class TrafficController {
             }
         }
 
+        // ── 90° turns (horizontal ↔ vertical) ────────────────────────────────────
         for (Intersection inter : intersections) {
-            if (v.hasTurned())
+            if (v.hasTurned() || v.isTurning())
                 break;
 
             if (v.getDirection() == Direction.NORTH && inter.type.equals("3way")
@@ -328,6 +333,7 @@ public class TrafficController {
             if (v.getTurnIntent().equals("STRAIGHT"))
                 continue;
 
+            // ── EAST / WEST → NORTH / SOUTH ──────────────────────────────────────
             if (v.getDirection() == Direction.EAST || v.getDirection() == Direction.WEST) {
                 if ((inter.type.equals("3way") && v.getTurnIntent().equals("LEFT")
                         && v.getDirection() == Direction.EAST) ||
@@ -351,7 +357,7 @@ public class TrafficController {
                                 : (v.getName().equals("Bike") ? northLanes[0] : northLanes[1]);
                         targetDir = Direction.NORTH;
                     }
-                } else {
+                } else { // WEST
                     if (v.getTurnIntent().equals("RIGHT")) {
                         targetX = isEmergency ? northLanes[1]
                                 : (v.getName().equals("Bike") ? northLanes[0] : northLanes[1]);
@@ -364,7 +370,33 @@ public class TrafficController {
                 }
 
                 if (targetX != null && targetDir != null) {
-                    if (Math.abs(v.getX() - targetX) <= v.getOriginalSpeed()) {
+                    // ── Early smooth-turn trigger: fires when front bumper enters the intersection.
+                    //    This gives the Bézier arc room to develop across the intersection box.
+                    if (!v.hasTurned() && !v.isTurning()) {
+                        double frontX = (v.getDirection() == Direction.EAST)
+                                ? v.getX() + v.getBodyWidth()   // right edge = forward for EAST
+                                : v.getX();                      // left  edge = forward for WEST
+                        boolean inEntry = (v.getDirection() == Direction.EAST)
+                                ? frontX >= inter.x + 10 && frontX < inter.x + roadWidth
+                                : frontX <= inter.x + roadWidth - 10 && frontX > inter.x;
+                        if (inEntry && isTurnSafe(v)) {
+                            double p0x = v.getX(), p0y = v.getY();
+                            double p2x = targetX;
+                            double p2y = (targetDir == Direction.SOUTH)
+                                    ? roadStartY + roadWidth + 100   // 100 px below intersection
+                                    : roadStartY - 100;              // 100 px above intersection
+                            double[] din  = dirVector(v.getDirection());
+                            double[] dout = dirVector(targetDir);
+                            double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
+                            v.setWaitingToTurn(false);
+                            v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
+                            return;
+                        }
+                    }
+                    // ── Fallback snap: vehicle passed through without starting the curve
+                    //    (e.g., intersection was unsafe the whole time). Behaviour identical
+                    //    to the previous implementation — no regression.
+                    if (!v.isTurning() && Math.abs(v.getX() - targetX) <= v.getOriginalSpeed()) {
                         if (!isSpotOccupied(v, targetX, v.getY()) && isTurnSafe(v)) {
                             v.setX(targetX);
                             v.setDirection(targetDir);
@@ -376,6 +408,8 @@ public class TrafficController {
                         }
                     }
                 }
+
+            // ── SOUTH / NORTH → EAST / WEST ──────────────────────────────────────
             } else if (v.getDirection() == Direction.SOUTH || v.getDirection() == Direction.NORTH) {
                 if (v.getX() < inter.x || v.getX() > inter.x + roadWidth)
                     continue;
@@ -390,7 +424,7 @@ public class TrafficController {
                         targetY = getEastLaneForTurn(inter, v);
                         targetDir = Direction.EAST;
                     }
-                } else {
+                } else { // NORTH
                     if (v.getTurnIntent().equals("RIGHT")) {
                         targetY = getEastLaneForTurn(inter, v);
                         targetDir = Direction.EAST;
@@ -401,7 +435,32 @@ public class TrafficController {
                 }
 
                 if (targetY != -1 && targetDir != null) {
-                    if (Math.abs(v.getY() - targetY) <= v.getOriginalSpeed()) {
+                    // ── Early smooth-turn trigger ─────────────────────────────────
+                    if (!v.hasTurned() && !v.isTurning()) {
+                        double frontY = (v.getDirection() == Direction.SOUTH)
+                                ? v.getY() + v.getBodyHeight()   // bottom edge = forward for SOUTH
+                                : v.getY();                      // top    edge = forward for NORTH
+                        boolean inEntry = (v.getDirection() == Direction.SOUTH)
+                                ? frontY >= roadStartY + 10 && frontY < roadStartY + roadWidth
+                                : frontY <= roadStartY + roadWidth - 10 && frontY > roadStartY;
+                        // Vehicle must also be inside the intersection column horizontally.
+                        boolean inColumn = v.getX() >= inter.x && v.getX() <= inter.x + roadWidth;
+                        if (inEntry && inColumn && isTurnSafe(v)) {
+                            double p0x = v.getX(), p0y = v.getY();
+                            double p2y = targetY;
+                            double p2x = (targetDir == Direction.EAST)
+                                    ? inter.x + roadWidth + 100   // 100 px right of intersection
+                                    : inter.x - 100;              // 100 px left  of intersection
+                            double[] din  = dirVector(v.getDirection());
+                            double[] dout = dirVector(targetDir);
+                            double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
+                            v.setWaitingToTurn(false);
+                            v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
+                            return;
+                        }
+                    }
+                    // ── Fallback snap ─────────────────────────────────────────────
+                    if (!v.isTurning() && Math.abs(v.getY() - targetY) <= v.getOriginalSpeed()) {
                         if (!isSpotOccupied(v, v.getX(), targetY) && isTurnSafe(v)) {
                             v.setY(targetY);
                             v.setDirection(targetDir);
@@ -415,6 +474,49 @@ public class TrafficController {
                 }
             }
         }
+    }
+
+    // ── Bézier turn geometry helpers ─────────────────────────────────────────
+
+    /**
+     * Returns the unit-vector (dx, dy) corresponding to a Direction.
+     */
+    private double[] dirVector(Direction d) {
+        switch (d) {
+            case EAST:      return new double[]{ 1,       0      };
+            case WEST:      return new double[]{-1,       0      };
+            case SOUTH:     return new double[]{ 0,       1      };
+            case NORTH:     return new double[]{ 0,      -1      };
+            case NORTHEAST: return new double[]{ 0.7071, -0.7071 };
+            case SOUTHWEST: return new double[]{-0.7071,  0.7071 };
+            default:        return new double[]{ 1,       0      };
+        }
+    }
+
+    /**
+     * Computes the quadratic Bézier control point P1 for a turn from P0
+     * travelling in direction {@code din} to exit point P2 leaving in direction
+     * {@code dout}.
+     * <p>
+     * P1 is the intersection of:
+     * <ul>
+     *   <li>the ray from P0 in direction din  (entry tangent), and</li>
+     *   <li>the ray from P2 in direction -dout (reverse exit tangent).</li>
+     * </ul>
+     * This guarantees that B'(0) ∥ din and B'(1) ∥ dout exactly.
+     */
+    private double[] computeControlPoint(double p0x, double p0y, double[] din,
+                                          double p2x, double p2y, double[] dout) {
+        // Solve: (P2 - P0) = s * din  +  t * dout
+        // det = din.x * dout.y  -  din.y * dout.x
+        double det = din[0] * dout[1] - din[1] * dout[0];
+        if (Math.abs(det) < 1e-9) {
+            // Directions are parallel → fall back to midpoint.
+            return new double[]{ (p0x + p2x) / 2, (p0y + p2y) / 2 };
+        }
+        double dx = p2x - p0x, dy = p2y - p0y;
+        double s = (dx * dout[1] - dy * dout[0]) / det;
+        return new double[]{ p0x + s * din[0], p0y + s * din[1] };
     }
 
     public boolean checkSafeDistance(Vehicle currentV, int threshold) {
@@ -894,6 +996,14 @@ public class TrafficController {
     public void updateAll() {
         ticks++;
         for (Vehicle v : new java.util.ArrayList<>(vehicles)) {
+
+            // ── Smooth-turn: a vehicle committed to a Bézier arc advances along it
+            //    and skips all other logic (traffic light, safe-distance, overtake).
+            //    This is physically appropriate — once a turn is begun it is committed.
+            if (v.isTurning()) {
+                v.advanceTurn();
+                continue;
+            }
 
             for (Intersection inter : intersections) {
                 if (inter.type.equals("5way") || inter.type.equals("4way")) {

@@ -27,8 +27,22 @@ public abstract class Vehicle {
     protected DriverStrategy driverStrategy;
     protected boolean waitingToTurn = false;
 
+    // ── Smooth-turn Bézier state ────────────────────────────────────────────
+    // Position and angle follow a quadratic Bézier B(t) = (1-t)²P0 + 2t(1-t)P1 + t²P2.
+    // Physics (hitbox, getBodyWidth/Height) are NEVER modified during a turn.
+    private boolean   isTurning   = false;
+    private double    turnT       = 0;          // curve parameter [0 .. 1]
+    private double    turnP0x, turnP0y;         // start point
+    private double    turnP1x, turnP1y;         // control point (corner tangent)
+    private double    turnP2x, turnP2y;         // end point (exit lane)
+    private double    turnArcLen  = 1;          // estimated arc length for dt calc
+    private Direction turnExitDir = Direction.EAST;
+    /** Current render angle (rad), same sign convention as draw(). Continuously updated. */
+    double turnAngle = 0;
+    // ────────────────────────────────────────────────────────────────────────
+
     protected static final int LENGTH = 55;
-    protected static final int WIDTH = 32;
+    protected static final int WIDTH  = 32;
     protected static final Random random = new Random();
     protected static Map<String, BufferedImage> spriteCache = new HashMap<>();
 
@@ -45,10 +59,10 @@ public abstract class Vehicle {
         this.hasTurned = false;
 
         int r = random.nextInt(100);
-        if (r < 50) turnIntent = "STRAIGHT";
+        if      (r < 50) turnIntent = "STRAIGHT";
         else if (r < 65) turnIntent = "RIGHT";
         else if (r < 80) turnIntent = "LEFT";
-        else turnIntent = "DIAGONAL";
+        else             turnIntent = "DIAGONAL";
     }
 
     public void move(boolean isAllowed) {
@@ -95,41 +109,49 @@ public abstract class Vehicle {
         if (!graphicMode) {
             // ── BASIC MODE ───────────────────────────────────────────────────────────
             // Feature 1: scale up visually when inside an intersection.
+            // Smooth-turn: rotate the rectangle to face the direction of travel.
             // Physics (x, y, getBodyWidth/Height, hitboxes) are NEVER modified.
             boolean inIntersection = false;
             if (intersectionBoxes != null) {
                 for (Rectangle box : intersectionBoxes) {
-                    if (box.intersects(getHitbox())) {
-                        inIntersection = true;
-                        break;
-                    }
+                    if (box.intersects(getHitbox())) { inIntersection = true; break; }
                 }
             }
 
-            AffineTransform old = g2d.getTransform();
-            if (inIntersection) {
-                // Scale 1.35× around the vehicle's body centre — same save/restore
-                // pattern used for sprite rotation in GRAPHIC mode below.
-                double cx = x + getBodyWidth() / 2.0;
-                double cy = y + getBodyHeight() / 2.0;
-                g2d.translate(cx, cy);
-                g2d.scale(1.35, 1.35);
-                g2d.translate(-cx, -cy);
-            }
-
             int bw = getBodyWidth(), bh = getBodyHeight();
-            g2d.setColor(color);
-            g2d.fillRect((int) x, (int) y, bw, bh);
-            g2d.setColor(color.darker());
-            g2d.drawRect((int) x, (int) y, bw, bh);
-            g2d.setColor(Color.BLACK);
-            g2d.setFont(new Font("Monospaced", Font.BOLD, 10));
-            FontMetrics fm = g2d.getFontMetrics();
-            int tx = (int) x + (bw - fm.stringWidth(name)) / 2;
-            int ty = (int) y + (bh + fm.getAscent() - fm.getDescent()) / 2;
-            g2d.drawString(name, tx, ty);
+            double vcx = x + bw / 2.0, vcy = y + bh / 2.0;
 
-            g2d.setTransform(old); // always restore, whether we scaled or not
+            AffineTransform old = g2d.getTransform();
+            if (inIntersection || isTurning) {
+                // Apply scale and/or rotation around vehicle centre in a single transform.
+                g2d.translate(vcx, vcy);
+                if (inIntersection) g2d.scale(1.35, 1.35);
+                if (isTurning)      g2d.rotate(turnAngle - Math.PI / 2.0);
+                // Now draw centred at origin in the transformed space.
+                g2d.setColor(color);
+                g2d.fillRect(-bw / 2, -bh / 2, bw, bh);
+                g2d.setColor(color.darker());
+                g2d.drawRect(-bw / 2, -bh / 2, bw, bh);
+                g2d.setColor(Color.BLACK);
+                g2d.setFont(new Font("Monospaced", Font.BOLD, 10));
+                FontMetrics fm = g2d.getFontMetrics();
+                g2d.drawString(name,
+                        -fm.stringWidth(name) / 2,
+                        (fm.getAscent() - fm.getDescent()) / 2);
+            } else {
+                // Fast path for non-turning, non-intersection vehicles — unchanged from before.
+                g2d.setColor(color);
+                g2d.fillRect((int) x, (int) y, bw, bh);
+                g2d.setColor(color.darker());
+                g2d.drawRect((int) x, (int) y, bw, bh);
+                g2d.setColor(Color.BLACK);
+                g2d.setFont(new Font("Monospaced", Font.BOLD, 10));
+                FontMetrics fm = g2d.getFontMetrics();
+                int tx = (int) x + (bw - fm.stringWidth(name)) / 2;
+                int ty = (int) y + (bh + fm.getAscent() - fm.getDescent()) / 2;
+                g2d.drawString(name, tx, ty);
+            }
+            g2d.setTransform(old); // always restore
             return;
         }
 
@@ -149,25 +171,32 @@ public abstract class Vehicle {
             g2d.setColor(Color.WHITE);
             g2d.setFont(new Font("Monospaced", Font.BOLD, 10));
             FontMetrics fm = g2d.getFontMetrics();
-            int tx = (int) x + (bw - fm.stringWidth(name)) / 2;
-            int ty = (int) y + (bh + fm.getAscent() - fm.getDescent()) / 2;
+            int tx = (int) x + (getBodyWidth() - fm.stringWidth(name)) / 2;
+            int ty = (int) y + (getBodyHeight() + fm.getAscent() - fm.getDescent()) / 2;
             g2d.drawString(name, tx, ty);
             return;
         }
 
-        double angle = 0;
-        switch (direction) {
-            case EAST:      angle = 0;                break;
-            case SOUTH:     angle = Math.PI / 2;      break;
-            case WEST:      angle = Math.PI;           break;
-            case NORTH:     angle = -Math.PI / 2;      break;
-            case NORTHEAST: angle = -Math.PI / 4;      break;
-            case SOUTHWEST: angle = 3 * Math.PI / 4;   break;
+        // Compute render angle — use continuous Bézier angle when turning,
+        // otherwise derive from the discrete direction enum.
+        double angle;
+        if (isTurning) {
+            angle = turnAngle;   // already has the +PI/2 sprite-orientation offset
+        } else {
+            switch (direction) {
+                case EAST:      angle = 0;               break;
+                case SOUTH:     angle = Math.PI / 2;     break;
+                case WEST:      angle = Math.PI;          break;
+                case NORTH:     angle = -Math.PI / 2;     break;
+                case NORTHEAST: angle = -Math.PI / 4;     break;
+                case SOUTHWEST: angle = 3 * Math.PI / 4;  break;
+                default:        angle = 0;               break;
+            }
+            angle += Math.PI / 2;
         }
-        angle += Math.PI / 2;
 
         AffineTransform old = g2d.getTransform();
-        double centerX = x + getBodyWidth() / 2.0;
+        double centerX = x + getBodyWidth()  / 2.0;
         double centerY = y + getBodyHeight() / 2.0;
         g2d.translate(centerX, centerY);
         g2d.rotate(angle);
@@ -186,6 +215,83 @@ public abstract class Vehicle {
             case SOUTHWEST: x -= speed * diag; y += speed * diag; break;
         }
     }
+
+    // ── Smooth-turn Bézier API ───────────────────────────────────────────────
+
+    /**
+     * Begin a quadratic Bézier turn: path goes from P0 through control point P1
+     * to exit point P2, then the vehicle continues in exitDir.
+     * <p>
+     * The vehicle is snapped to P0 immediately.  All movement during the turn is
+     * handled by repeated calls to {@link #advanceTurn()} in the simulation loop
+     * — NOT through {@link #updatePosition()}.
+     */
+    public void beginTurn(double p0x, double p0y,
+                          double p1x, double p1y,
+                          double p2x, double p2y,
+                          Direction exitDir) {
+        isTurning   = true;
+        turnT       = 0;
+        turnP0x = p0x; turnP0y = p0y;
+        turnP1x = p1x; turnP1y = p1y;
+        turnP2x = p2x; turnP2y = p2y;
+        turnExitDir = exitDir;
+        turnArcLen  = bezierArcLen(p0x, p0y, p1x, p1y, p2x, p2y);
+        if (turnArcLen < 1) turnArcLen = 1;
+        // Snap vehicle to start of arc.
+        x = p0x; y = p0y;
+        // Initial angle: tangent direction at t=0 → 2*(P1-P0); fall back to P0→P2.
+        double dx = 2 * (p1x - p0x), dy = 2 * (p1y - p0y);
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) { dx = p2x - p0x; dy = p2y - p0y; }
+        turnAngle = Math.atan2(dy, dx) + Math.PI / 2;
+    }
+
+    /**
+     * Advance the Bézier curve by one simulation tick at {@link #originalSpeed}.
+     *
+     * @return {@code true} when the turn has completed.
+     */
+    public boolean advanceTurn() {
+        if (!isTurning) return true;
+        turnT = Math.min(1.0, turnT + originalSpeed / turnArcLen);
+        double t = turnT, u = 1 - t;
+        // Position on the quadratic Bézier.
+        x = u*u*turnP0x + 2*u*t*turnP1x + t*t*turnP2x;
+        y = u*u*turnP0y + 2*u*t*turnP1y + t*t*turnP2y;
+        // Tangent direction → continuous render angle.
+        double dx = 2*u*(turnP1x - turnP0x) + 2*t*(turnP2x - turnP1x);
+        double dy = 2*u*(turnP1y - turnP0y) + 2*t*(turnP2y - turnP1y);
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5)
+            turnAngle = Math.atan2(dy, dx) + Math.PI / 2;
+        // Finalise when curve is complete.
+        if (turnT >= 1.0) {
+            isTurning = false;
+            direction = turnExitDir;
+            hasTurned = true;
+            x = turnP2x; y = turnP2y;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean isTurning() { return isTurning; }
+
+    /** 16-segment numerical arc-length estimate for a quadratic Bézier. */
+    private static double bezierArcLen(double p0x, double p0y,
+                                        double p1x, double p1y,
+                                        double p2x, double p2y) {
+        int N = 16;
+        double len = 0, px = p0x, py = p0y;
+        for (int i = 1; i <= N; i++) {
+            double t = i / (double) N, u = 1 - t;
+            double nx = u*u*p0x + 2*u*t*p1x + t*t*p2x;
+            double ny = u*u*p0y + 2*u*t*p1y + t*t*p2y;
+            len += Math.hypot(nx - px, ny - py);
+            px = nx; py = ny;
+        }
+        return len;
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // ======================== TÍNH ĐÓNG GÓI OOP (ENCAPSULATION) ========================
     public Rectangle getHitbox() {
