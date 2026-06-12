@@ -484,12 +484,12 @@ public class TrafficController {
                         vy = -1;
                         break;
                     case NORTHEAST:
-                        vx = 1;
-                        vy = -1;
+                        vx = 0.7071;
+                        vy = -0.7071;
                         break;
                     case SOUTHWEST:
-                        vx = -1;
-                        vy = 1;
+                        vx = -0.7071;
+                        vy = 0.7071;
                         break;
                 }
 
@@ -849,13 +849,13 @@ public class TrafficController {
         if (d == Direction.SOUTH) {
             if (v.getX() < inter.x || v.getX() > inter.x + roadWidth)
                 return false;
-            double stopLine = roadStartY - 10;
+            double stopLine = roadStartY - 40;
             return frontY >= stopLine - buf && frontY <= stopLine + overshoot;
         }
         if (d == Direction.NORTH) {
             if (v.getX() < inter.x || v.getX() > inter.x + roadWidth)
                 return false;
-            double stopLine = roadStartY + roadWidth + 10;
+            double stopLine = roadStartY + roadWidth + 40;
             return frontY <= stopLine + buf && frontY >= stopLine - overshoot;
         }
         if (d == Direction.SOUTHWEST && inter.type.equals("5way")) {

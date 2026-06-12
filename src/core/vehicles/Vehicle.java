@@ -89,7 +89,7 @@ public abstract class Vehicle {
             g2d.fillRect((int) x, (int) y, bw, bh);
             g2d.setColor(color.darker());
             g2d.drawRect((int) x, (int) y, bw, bh);
-            g2d.setColor(Color.WHITE);
+            g2d.setColor(Color.BLACK);
             g2d.setFont(new Font("Monospaced", Font.BOLD, 10));
             FontMetrics fm = g2d.getFontMetrics();
             int tx = (int) x + (bw - fm.stringWidth(name)) / 2;
