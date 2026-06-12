@@ -179,17 +179,23 @@ public class Main extends JPanel implements ActionListener {
         // 1. Remove all active vehicles
         vehicles.clear();
 
+        // 2. Force tree layout regeneration for the new intersection positions
+        renderer.resetTrees();
+
         // 2. Rebuild intersection list (fresh TrafficLight = automatic phase reset)
         intersections.clear();
         switch (mode) {
             case NGA_BA:
-                intersections.add(new Intersection(150,  200, "3way", new TrafficLight(false)));
+                // Centre the 3-way at x=600 (same column as the default 4-way)
+                // so all coordinate-dependent systems compute against the screen centre.
+                intersections.add(new Intersection(600, 200, "3way", new TrafficLight(false)));
                 break;
             case NGA_TU:
                 intersections.add(new Intersection(600,  200, "4way", new TrafficLight(false)));
                 break;
             case NGA_NAM:
-                intersections.add(new Intersection(1200, 200, "5way", new TrafficLight(true)));
+                // Centre the 5-way at x=600 for the same reason.
+                intersections.add(new Intersection(600, 200, "5way", new TrafficLight(true)));
                 break;
             case TONG_HOP:
             default:

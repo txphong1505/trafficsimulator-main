@@ -56,8 +56,16 @@ public class TrafficController {
             Intersection inter = inter5.get();
             int cx5 = inter.x + roadWidth / 2;
             int cy5 = roadStartY + roadWidth / 2;
+            // Spawn on the road centre-line: x + y = cx5 + cy5 (the 45° diagonal invariant).
+            // A SOUTHWEST vehicle conserves x+y throughout its run (Δx=−Δy per updatePosition),
+            // so the spawn point must satisfy spawnX + spawnY = cx5 + cy5 exactly.
+            // Prefer the screen's right edge; fall back to top edge when right-edge Y < -200.
             double spawnX = width + 60;
-            double spawnY = cy5 - (spawnX - cx5) - 85;
+            double spawnY = cy5 - (spawnX - cx5);   // no fudge — places vehicle on centre-line
+            if (spawnY < -200) {
+                spawnY = -60;                        // top-edge exit
+                spawnX = cx5 + cy5 - spawnY;        // = cx5 + cy5 + 60, still on centre-line
+            }
             Direction dir = Direction.SOUTHWEST;
             for (Vehicle v : vehicles) {
                 if (v.getDirection() == dir && Math.hypot(v.getX() - spawnX, v.getY() - spawnY) < 160)

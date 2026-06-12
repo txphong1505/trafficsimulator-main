@@ -112,7 +112,21 @@ public class Renderer {
                 }
             }
 
-            if (tx > 1100 && ty < 400) isValid = false;
+            // Dynamic exclusion for the diagonal road NE of any 5-way intersection.
+            // The road centre-line satisfies x+y = cx5+cy5 (slope −1, NE direction).
+            // Perpendicular distance from tree (tx,ty) to that line = |tx+ty−(cx5+cy5)| / √2.
+            // Block trees within (roadWidth/2 + curb) of the centre-line that are
+            // on the NE side (tx+ty > cx5+cy5−roadWidth) and above the horizontal road.
+            for (Intersection diagInter : intersections) {
+                if (!diagInter.type.equals("5way")) continue;
+                int cx5t = diagInter.x + roadWidth / 2;
+                int cy5t = roadStartY + roadWidth / 2;
+                double perpDist = Math.abs((tx + ty) - (cx5t + cy5t)) / Math.sqrt(2);
+                boolean onNeSide = (tx + ty) > (cx5t + cy5t - roadWidth);
+                if (perpDist < roadWidth / 2.0 + curb && onNeSide && ty < roadStartY) {
+                    isValid = false;
+                }
+            }
 
             if (isValid) {
                 for (Point p : treePositions) {
@@ -123,6 +137,14 @@ public class Renderer {
             }
             if (isValid) treePositions.add(new Point(tx, ty));
         }
+    }
+
+    /** Invalidate the cached tree layout. Call before switching to a different intersection
+     *  configuration so that {@code generateTrees()} runs again on the next draw with
+     *  the new intersection list, producing correct tree-free road-column zones. */
+    public void resetTrees() {
+        treesGenerated = false;
+        treePositions.clear();
     }
 
     private void drawFillet(Graphics2D g2d, int cx, int cy, int quadrant) {
