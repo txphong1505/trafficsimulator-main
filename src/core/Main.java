@@ -1,4 +1,5 @@
-package core; 
+package core; // (Hãy sửa lại tên package nếu dự án của bạn khác)
+
 import core.controller.TrafficController;
 import core.environment.Intersection;
 import core.environment.TrafficLight;
@@ -30,8 +31,10 @@ public class Main extends JPanel implements ActionListener {
 
     private Rectangle modeButtonRect;
     private Rectangle trafficButtonRect;
+    private Rectangle renderModeButtonRect;
 
-    // ======================== BIẾN LƯU TRỮ ÂM LƯỢNG (THAY THẾ JSLIDER) ========================
+    // ======================== BIẾN LƯU TRỮ ÂM LƯỢNG (THAY THẾ JSLIDER)
+    // ========================
     private int currentVolume = 70;
     // =========================================================================================
 
@@ -57,8 +60,10 @@ public class Main extends JPanel implements ActionListener {
         // Khởi tạo tọa độ nút bấm theo kích thước gốc chuẩn
         modeButtonRect = new Rectangle(20, 20, 160, 45);
         trafficButtonRect = new Rectangle(200, 20, 160, 45);
+        renderModeButtonRect = new Rectangle(380, 20, 170, 45);
 
-        // ======================== XỬ LÝ SỰ KIỆN CLICK CHUỘT & KÉO THANH ÂM LƯỢNG ========================
+        // ======================== XỬ LÝ SỰ KIỆN CLICK CHUỘT & KÉO THANH ÂM LƯỢNG
+        // ========================
         MouseAdapter ma = new MouseAdapter() {
             private void handleVol(MouseEvent e) {
                 double scaleX = (double) getWidth() / BASE_WIDTH;
@@ -69,9 +74,9 @@ public class Main extends JPanel implements ActionListener {
                 int mx = (int) ((e.getX() - offsetX) / scale);
                 int my = (int) ((e.getY() - offsetY) / scale);
 
-                // Hitbox khớp chính xác 100% với hình vẽ thanh Volume (Tọa độ X từ 480 -> 600, Rộng 120px)
-                if (mx >= 470 && mx <= 610 && my >= 20 && my <= 60) {
-                    int newVol = (int) (((mx - 480) / 120.0) * 100);
+                // Hitbox for volume bar: shifted right to start at x=660 (width 120px)
+                if (mx >= 650 && mx <= 790 && my >= 20 && my <= 60) {
+                    int newVol = (int) (((mx - 660) / 120.0) * 100);
                     currentVolume = Math.max(0, Math.min(100, newVol));
                     SoundManager.setVolume(currentVolume / 100f);
                     repaint();
@@ -79,10 +84,14 @@ public class Main extends JPanel implements ActionListener {
             }
 
             @Override
-            public void mousePressed(MouseEvent e) { handleVol(e); }
+            public void mousePressed(MouseEvent e) {
+                handleVol(e);
+            }
 
             @Override
-            public void mouseDragged(MouseEvent e) { handleVol(e); }
+            public void mouseDragged(MouseEvent e) {
+                handleVol(e);
+            }
 
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -109,6 +118,12 @@ public class Main extends JPanel implements ActionListener {
                     return;
                 }
 
+                if (renderModeButtonRect.contains(mx, my)) {
+                    Vehicle.graphicMode = !Vehicle.graphicMode;
+                    repaint();
+                    return;
+                }
+
                 if (manualMode) {
                     for (Intersection inter : intersections) {
                         inter.light.fastForward(4);
@@ -124,7 +139,8 @@ public class Main extends JPanel implements ActionListener {
         timer = new Timer(25, this);
         timer.start();
 
-        for (int i = 0; i < 10; i++) controller.spawnVehicle();
+        for (int i = 0; i < 10; i++)
+            controller.spawnVehicle();
     }
 
     @Override
@@ -141,8 +157,10 @@ public class Main extends JPanel implements ActionListener {
         boolean ambulancePresent = false;
         boolean firetruckPresent = false;
         for (Vehicle v : vehicles) {
-            if (v.getName().equals("Ambu")) ambulancePresent = true;
-            if (v.getName().equals("Fire")) firetruckPresent = true;
+            if (v.getName().equals("Ambu"))
+                ambulancePresent = true;
+            if (v.getName().equals("Fire"))
+                firetruckPresent = true;
         }
         SoundManager.updateEmergencySiren("Ambu", "src/resources/sounds/ambulance.wav", ambulancePresent);
         SoundManager.updateEmergencySiren("Fire", "src/resources/sounds/firetruck.wav", firetruckPresent);
@@ -158,7 +176,8 @@ public class Main extends JPanel implements ActionListener {
         // BỘ LỌC ĐỒ HỌA PIXEL ART: Tắt toàn bộ tính năng làm mờ mịn
         // 1. Tắt làm mờ/nhòe khi phóng to ảnh xe cộ (Ép phóng to theo kiểu cục vuông)
         g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        // 2. Tắt khử răng cưa cho các khối hình học (mặt đường, vạch kẻ sẽ vuông thành sắc cạnh)
+        // 2. Tắt khử răng cưa cho các khối hình học (mặt đường, vạch kẻ sẽ vuông thành
+        // sắc cạnh)
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         // 3. Tắt khử răng cưa cho chữ số (số đếm ngược trên đèn sẽ ra đúng chất pixel)
         g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
@@ -184,29 +203,30 @@ public class Main extends JPanel implements ActionListener {
             v.draw(g2d);
         }
 
-        // ======================== VẼ THANH VOLUME & GIAO DIỆN UI ========================
-        // Vẽ nền UI Panel Volume
+        // ======================== VẼ THANH VOLUME & GIAO DIỆN UI
+        // ========================
+        // Vẽ nền UI Panel Volume (shifted right to x=560 to make room for Render Mode button)
         g2d.setColor(new Color(0, 0, 0, 160));
-        g2d.fillRoundRect(380, 20, 240, 45, 12, 12);
+        g2d.fillRoundRect(560, 20, 240, 45, 12, 12);
         g2d.setColor(Color.WHITE);
         g2d.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        g2d.drawString("Vol: " + currentVolume + "%", 395, 47);
+        g2d.drawString("Vol: " + currentVolume + "%", 575, 47);
 
         // Vẽ thanh Volume Bar tự chế (Pixel-perfect)
-        int volX = 480;
+        int volX = 660;
         int volY = 38;
-        int volW = 120; // Rộng chuẩn 120px
+        int volW = 120;
         int volH = 8;
 
         g2d.setColor(new Color(50, 50, 50));
-        g2d.fillRoundRect(volX, volY, volW, volH, 4, 4); // Rãnh đen
+        g2d.fillRoundRect(volX, volY, volW, volH, 4, 4);
 
         int fillW = (int) (volW * (currentVolume / 100.0));
         g2d.setColor(new Color(52, 152, 219));
-        g2d.fillRoundRect(volX, volY, fillW, volH, 4, 4); // Rãnh xanh
+        g2d.fillRoundRect(volX, volY, fillW, volH, 4, 4);
 
         g2d.setColor(Color.WHITE);
-        g2d.fillOval(volX + fillW - 6, volY - 3, 14, 14); // Nút tròn
+        g2d.fillOval(volX + fillW - 6, volY - 3, 14, 14);
         // ================================================================================
 
         drawStyledButton(g2d, modeButtonRect, "Mode: " + (manualMode ? "MANUAL" : "AUTO"),
@@ -214,6 +234,9 @@ public class Main extends JPanel implements ActionListener {
 
         drawStyledButton(g2d, trafficButtonRect, "Traffic: " + (highTraffic ? "HIGH" : "LOW"),
                 highTraffic ? new Color(230, 126, 34) : new Color(52, 152, 219));
+
+        drawStyledButton(g2d, renderModeButtonRect, "Render: " + (Vehicle.graphicMode ? "GRAPHIC" : "BASIC"),
+                Vehicle.graphicMode ? new Color(142, 68, 173) : new Color(127, 140, 141));
     }
 
     private void drawStyledButton(Graphics2D g2d, Rectangle rect, String text, Color statusColor) {

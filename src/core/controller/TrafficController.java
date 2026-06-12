@@ -380,7 +380,16 @@ public class TrafficController {
                     case SOUTHWEST: vx = -1; vy = 1; break;
                 }
 
-                if (dx * vx + dy * vy > -0.1) {
+                // Lateral guard: if the other vehicle is predominantly beside us (perpendicular
+                // distance >> forward distance), it is in an adjacent lane, not blocking our path.
+                // Lateral component = total displacement minus the forward projection.
+                double forwardProjection = dx * vx + dy * vy;
+                double lateralDx = dx - forwardProjection * vx;
+                double lateralDy = dy - forwardProjection * vy;
+                double lateralDist = Math.sqrt(lateralDx * lateralDx + lateralDy * lateralDy);
+                if (lateralDist > 28) continue;
+
+                if (forwardProjection > -0.1) {
                     return false;
                 } else if (currentV.getDirection() != other.getDirection()) {
                     if (System.identityHashCode(currentV) < System.identityHashCode(other)) return false;
@@ -555,7 +564,7 @@ public class TrafficController {
         if (d == Direction.EAST) frontX += v.getBodyWidth();
         else if (d == Direction.SOUTH) frontY += v.getBodyHeight();
 
-        int stopDist = 65, westStopDist = 95, overshoot = 30;
+        int stopDist = 280, westStopDist = 310, overshoot = 30;
         for (Intersection inter : intersections) {
             if (d == Direction.EAST && frontX >= inter.x - stopDist && frontX <= inter.x + overshoot) return inter;
             if (d == Direction.WEST && frontX <= inter.x + roadWidth + westStopDist && frontX >= inter.x + roadWidth - overshoot) return inter;
@@ -597,9 +606,37 @@ public class TrafficController {
         return true;
     }
 
+    // Checks if the vehicle is within the original tight physical stop zone (65px from the
+    // line). This is separate from getApproachingIntersection which uses a wider range for
+    // queue-awareness and tryOvertake suppression.
+    private boolean isInStopZone(Vehicle v, Intersection inter) {
+        Direction d = v.getDirection();
+        double frontX = v.getX(), frontY = v.getY();
+        if (d == Direction.EAST)  frontX += v.getBodyWidth();
+        else if (d == Direction.SOUTH) frontY += v.getBodyHeight();
+
+        int tightStop = 65, tightWest = 95, overshoot = 30;
+        if (d == Direction.EAST      && frontX >= inter.x - tightStop              && frontX <= inter.x + overshoot) return true;
+        if (d == Direction.WEST      && frontX <= inter.x + roadWidth + tightWest  && frontX >= inter.x + roadWidth - overshoot) return true;
+        if (d == Direction.SOUTH     && v.getX() >= inter.x && v.getX() <= inter.x + roadWidth
+                                     && frontY >= roadStartY - tightStop           && frontY <= roadStartY + overshoot) return true;
+        if (d == Direction.NORTH     && v.getX() >= inter.x && v.getX() <= inter.x + roadWidth
+                                     && frontY <= roadStartY + roadWidth + tightStop && frontY >= roadStartY + roadWidth - overshoot) return true;
+        if (d == Direction.SOUTHWEST && inter.type.equals("5way")) {
+            int cx = inter.x + roadWidth / 2;
+            double targetStopX = cx + 200;
+            if (frontX <= targetStopX + tightStop && frontX >= targetStopX - overshoot) return true;
+        }
+        return false;
+    }
+
     private boolean canVehicleGo(Vehicle v) {
         Intersection approaching = getApproachingIntersection(v);
         if (approaching == null || v.getName().equals("Ambu") || v.getName().equals("Fire")) return true;
+        // Only enforce the red/yellow light when the vehicle has reached the physical stop line.
+        // Cars that are further back in the queue have approaching != null (suppressing tryOvertake)
+        // but should not be braked by the light itself — the car directly in front will stop them.
+        if (!isInStopZone(v, approaching)) return true;
         return approaching.light.canGo(v.getDirection()) && isIntersectionClear(v, approaching);
     }
 
