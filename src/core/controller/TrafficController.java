@@ -624,26 +624,27 @@ public class TrafficController {
         int buf = (int)(v.getOriginalSpeed()) + 1;
         int overshoot = (int)(v.getOriginalSpeed()) + 1;
 
+        // Crosswalk padding derived from Renderer.java:
+        //   EAST:  left  crosswalk stripe at [inter.x-40, inter.x-10]  → stop at inter.x-40
+        //   WEST:  right crosswalk stripe at [inter.x+roadWidth+10, inter.x+roadWidth+40] → stop at inter.x+roadWidth+40
+        //   SOUTH: top   crosswalk stripe at [roadStartY-40, roadStartY-10] → stop at roadStartY-10
+        //   NORTH: bottom crosswalk stripe at [roadStartY+roadWidth+10, roadStartY+roadWidth+40] → stop at roadStartY+roadWidth+10
         if (d == Direction.EAST) {
-            // Stop line = left edge of intersection box
-            double stopLine = inter.x;
+            double stopLine = inter.x - 40;
             return frontX >= stopLine - buf && frontX <= stopLine + overshoot;
         }
         if (d == Direction.WEST) {
-            // Stop line = right edge of intersection box
-            double stopLine = inter.x + roadWidth;
+            double stopLine = inter.x + roadWidth + 40;
             return frontX <= stopLine + buf && frontX >= stopLine - overshoot;
         }
         if (d == Direction.SOUTH) {
             if (v.getX() < inter.x || v.getX() > inter.x + roadWidth) return false;
-            // Stop line = top edge of intersection box
-            double stopLine = roadStartY;
+            double stopLine = roadStartY - 10;
             return frontY >= stopLine - buf && frontY <= stopLine + overshoot;
         }
         if (d == Direction.NORTH) {
             if (v.getX() < inter.x || v.getX() > inter.x + roadWidth) return false;
-            // Stop line = bottom edge of intersection box (vehicle moves upward)
-            double stopLine = roadStartY + roadWidth;
+            double stopLine = roadStartY + roadWidth + 10;
             return frontY <= stopLine + buf && frontY >= stopLine - overshoot;
         }
         if (d == Direction.SOUTHWEST && inter.type.equals("5way")) {
@@ -690,8 +691,11 @@ public class TrafficController {
             else if (clearAheadFar) returnToSlowLane(v);
             yieldToEmergency(v);
 
-            // Ép xe dừng lại bằng thông số vật lý (speed = 0) khi có vật cản
-            if (checkSafeDistance(v, 35) && !v.isWaitingToTurn()) {
+            // Close-stop threshold: diagonal vehicles need a larger threshold (65px) because
+            // their body diagonal is sqrt(55^2+32^2) ≈ 63.5px, vs 35px for straight lanes.
+            int closeThreshold = (v.getDirection() == Direction.NORTHEAST
+                               || v.getDirection() == Direction.SOUTHWEST) ? 65 : 35;
+            if (checkSafeDistance(v, closeThreshold) && !v.isWaitingToTurn()) {
                 v.move(lightAllows);
             } else {
                 v.setSpeed(0);
