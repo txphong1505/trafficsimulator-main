@@ -61,10 +61,12 @@ public class TrafficController {
             // so the spawn point must satisfy spawnX + spawnY = cx5 + cy5 exactly.
             // Prefer the screen's right edge; fall back to top edge when right-edge Y < -200.
             double spawnX = width + 60;
-            double spawnY = cy5 - (spawnX - cx5);   // no fudge — places vehicle on centre-line
+            // Áp dụng offset -85 để xe đi vào làn bên phải (Tây Bắc của trục trung tâm)
+            double spawnY = cy5 - (spawnX - cx5) - 85;
             if (spawnY < -200) {
                 spawnY = -60;                        // top-edge exit
-                spawnX = cx5 + cy5 - spawnY;        // = cx5 + cy5 + 60, still on centre-line
+                // Đảm bảo tổng x + y luôn bằng cx5 + cy5 - 85
+                spawnX = cx5 + cy5 - 85 - spawnY;
             }
             Direction dir = Direction.SOUTHWEST;
             for (Vehicle v : vehicles) {
@@ -279,8 +281,8 @@ public class TrafficController {
                 int cy = roadStartY + roadWidth / 2;
                 if (v.getDirection() == Direction.EAST && v.getTurnIntent().equals("DIAGONAL") && !v.hasTurned()) {
                     if (Math.abs(v.getX() - (cx - 30)) <= v.getOriginalSpeed() * 2) {
-                        double tx = cx - 20 + 25;
-                        double ty = cy - 20 + 25;
+                        double ty = v.getY();
+                        double tx = (cx + cy + 85) - ty;
                         if (!isSpotOccupied(v, tx, ty)) {
                             v.setX(tx);
                             v.setY(ty);
