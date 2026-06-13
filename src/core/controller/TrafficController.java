@@ -370,8 +370,12 @@ public class TrafficController {
                 }
 
                 if (targetX != null && targetDir != null) {
-                    // ── Early smooth-turn trigger: fires when front bumper enters the intersection.
-                    //    This gives the Bézier arc room to develop across the intersection box.
+                    // ── Smooth-turn trigger: fires as soon as the front bumper enters the
+                    //    intersection column, giving the Bézier arc the full intersection width
+                    //    to develop.  Mathematical proof: when the fallback condition
+                    //    |v.getX()-targetX| ≤ speed would fire, frontX is always already
+                    //    inside [inter.x+10 .. inter.x+roadWidth), so inEntry is always true
+                    //    and the return below makes the old snap permanently unreachable.
                     if (!v.hasTurned() && !v.isTurning()) {
                         double frontX = (v.getDirection() == Direction.EAST)
                                 ? v.getX() + v.getBodyWidth()   // right edge = forward for EAST
@@ -379,34 +383,32 @@ public class TrafficController {
                         boolean inEntry = (v.getDirection() == Direction.EAST)
                                 ? frontX >= inter.x + 10 && frontX < inter.x + roadWidth
                                 : frontX <= inter.x + roadWidth - 10 && frontX > inter.x;
-                        if (inEntry && isTurnSafe(v)) {
-                            double p0x = v.getX(), p0y = v.getY();
-                            double p2x = targetX;
-                            double p2y = (targetDir == Direction.SOUTH)
-                                    ? roadStartY + roadWidth + 100   // 100 px below intersection
-                                    : roadStartY - 100;              // 100 px above intersection
-                            double[] din  = dirVector(v.getDirection());
-                            double[] dout = dirVector(targetDir);
-                            double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
-                            v.setWaitingToTurn(false);
-                            v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
-                            return;
+                        if (inEntry) {
+                            if (isTurnSafe(v)) {
+                                double p0x = v.getX(), p0y = v.getY();
+                                double p2x = targetX;
+                                double p2y = (targetDir == Direction.SOUTH)
+                                        ? roadStartY + roadWidth + 100
+                                        : roadStartY - 100;
+                                double[] din  = dirVector(v.getDirection());
+                                double[] dout = dirVector(targetDir);
+                                double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
+                                v.setWaitingToTurn(false);
+                                v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
+                            } else {
+                                // Cannot turn yet — stop at intersection entry and wait.
+                                // The return below is the key: it prevents the old fallback
+                                // snap (v.setX(targetX)) from ever firing.
+                                v.setWaitingToTurn(true);
+                                v.setSpeed(0);
+                            }
+                            return; // always return when inEntry active
                         }
+                        // Vehicle has not yet entered this intersection's turning zone.
                     }
-                    // ── Fallback snap: vehicle passed through without starting the curve
-                    //    (e.g., intersection was unsafe the whole time). Behaviour identical
-                    //    to the previous implementation — no regression.
-                    if (!v.isTurning() && Math.abs(v.getX() - targetX) <= v.getOriginalSpeed()) {
-                        if (!isSpotOccupied(v, targetX, v.getY()) && isTurnSafe(v)) {
-                            v.setX(targetX);
-                            v.setDirection(targetDir);
-                            v.setHasTurned(true);
-                        } else {
-                            v.setWaitingToTurn(true);
-                            v.setSpeed(0);
-                            v.setX(targetX);
-                        }
-                    }
+                    // No fallback snap.  If the vehicle drove straight through without
+                    // ever being able to turn safely, it exits the intersection and is
+                    // despawned when it leaves the map — no discrete coordinate jump.
                 }
 
             // ── SOUTH / NORTH → EAST / WEST ──────────────────────────────────────
@@ -435,42 +437,35 @@ public class TrafficController {
                 }
 
                 if (targetY != -1 && targetDir != null) {
-                    // ── Early smooth-turn trigger ─────────────────────────────────
+                    // ── Smooth-turn trigger (same design as H→V above) ──────────────
                     if (!v.hasTurned() && !v.isTurning()) {
                         double frontY = (v.getDirection() == Direction.SOUTH)
-                                ? v.getY() + v.getBodyHeight()   // bottom edge = forward for SOUTH
-                                : v.getY();                      // top    edge = forward for NORTH
+                                ? v.getY() + v.getBodyHeight()
+                                : v.getY();
                         boolean inEntry = (v.getDirection() == Direction.SOUTH)
                                 ? frontY >= roadStartY + 10 && frontY < roadStartY + roadWidth
                                 : frontY <= roadStartY + roadWidth - 10 && frontY > roadStartY;
-                        // Vehicle must also be inside the intersection column horizontally.
                         boolean inColumn = v.getX() >= inter.x && v.getX() <= inter.x + roadWidth;
-                        if (inEntry && inColumn && isTurnSafe(v)) {
-                            double p0x = v.getX(), p0y = v.getY();
-                            double p2y = targetY;
-                            double p2x = (targetDir == Direction.EAST)
-                                    ? inter.x + roadWidth + 100   // 100 px right of intersection
-                                    : inter.x - 100;              // 100 px left  of intersection
-                            double[] din  = dirVector(v.getDirection());
-                            double[] dout = dirVector(targetDir);
-                            double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
-                            v.setWaitingToTurn(false);
-                            v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
-                            return;
+                        if (inEntry && inColumn) {
+                            if (isTurnSafe(v)) {
+                                double p0x = v.getX(), p0y = v.getY();
+                                double p2y = targetY;
+                                double p2x = (targetDir == Direction.EAST)
+                                        ? inter.x + roadWidth + 100
+                                        : inter.x - 100;
+                                double[] din  = dirVector(v.getDirection());
+                                double[] dout = dirVector(targetDir);
+                                double[] p1   = computeControlPoint(p0x, p0y, din, p2x, p2y, dout);
+                                v.setWaitingToTurn(false);
+                                v.beginTurn(p0x, p0y, p1[0], p1[1], p2x, p2y, targetDir);
+                            } else {
+                                v.setWaitingToTurn(true);
+                                v.setSpeed(0);
+                            }
+                            return; // always return when inEntry+inColumn active
                         }
                     }
-                    // ── Fallback snap ─────────────────────────────────────────────
-                    if (!v.isTurning() && Math.abs(v.getY() - targetY) <= v.getOriginalSpeed()) {
-                        if (!isSpotOccupied(v, v.getX(), targetY) && isTurnSafe(v)) {
-                            v.setY(targetY);
-                            v.setDirection(targetDir);
-                            v.setHasTurned(true);
-                        } else {
-                            v.setWaitingToTurn(true);
-                            v.setSpeed(0);
-                            v.setY(targetY);
-                        }
-                    }
+                    // No fallback snap — same reasoning as H→V block above.
                 }
             }
         }
@@ -527,6 +522,13 @@ public class TrafficController {
 
         for (Vehicle other : vehicles) {
             if (other == currentV)
+                continue;
+            // FIX-2: A turning vehicle that has been blocked for ≥20 consecutive ticks is
+            // deadlocked (its arc and this vehicle's path are mutually blocking each other).
+            // Allow cross-traffic to pass through its mid-arc hitbox so that both vehicles
+            // can make progress.  The transient overlap (≤15 ticks) is preferable to an
+            // irresolvable permanent stall.
+            if (other.isTurning() && other.getTurnBlockedTicks() >= 20)
                 continue;
             Rectangle otherRect = other.getShrinkHitbox(4);
 
@@ -1000,10 +1002,38 @@ public class TrafficController {
             // ── Smooth-turn: a vehicle committed to a Bézier arc advances along it
             //    and skips all other logic (traffic light, safe-distance, overtake).
             //    This is physically appropriate — once a turn is begun it is committed.
+            //    COLLISION GUARD: after advancing, if the new hitbox penetrates any
+            //    non-turning vehicle, revert the position and turnT for this tick
+            //    (arc is paused until the exit lane clears).
             if (v.isTurning()) {
-                v.advanceTurn();
+                double savedX = v.getX(), savedY = v.getY(), savedT = v.getTurnT();
+                boolean done = v.advanceTurn();
+                if (!done) {
+                    Rectangle myHitbox = v.getHitbox();
+                    boolean blocked = false;
+                    for (Vehicle other : vehicles) {
+                        if (other == v || other.isTurning()) continue;
+                        if (myHitbox.intersects(other.getShrinkHitbox(2))) {
+                            blocked = true; break;
+                        }
+                    }
+                    if (blocked) {
+                        // Guard fires: revert arc position.
+                        v.setX(savedX); v.setY(savedY); v.setTurnT(savedT);
+                        // FIX-1: speed=0 makes this vehicle invisible to isTurnSafe →
+                        // vehicles queued behind can attempt their own turns without
+                        // waiting indefinitely for this one to clear the intersection.
+                        v.setSpeed(0);
+                        v.incTurnBlockedTicks();
+                    } else {
+                        v.resetTurnBlockedTicks();
+                    }
+                } else {
+                    v.resetTurnBlockedTicks();
+                }
                 continue;
             }
+
 
             for (Intersection inter : intersections) {
                 if (inter.type.equals("5way") || inter.type.equals("4way")) {
@@ -1020,6 +1050,35 @@ public class TrafficController {
             }
 
             executeTurn(v);
+            // ── Root-Cause-3 fix: if executeTurn just committed the vehicle to a Bézier
+            //    this very tick, advance the curve immediately and skip linear movement.
+            //    Without this, v.move() below would call updatePosition() and add speed
+            //    pixels in the OLD direction, causing a one-frame linear overshoot.
+            //    Same collision guard as the early-check above.
+            if (v.isTurning()) {
+                double savedX = v.getX(), savedY = v.getY(), savedT = v.getTurnT();
+                boolean done = v.advanceTurn();
+                if (!done) {
+                    Rectangle myHitbox = v.getHitbox();
+                    boolean blocked = false;
+                    for (Vehicle other : vehicles) {
+                        if (other == v || other.isTurning()) continue;
+                        if (myHitbox.intersects(other.getShrinkHitbox(2))) {
+                            blocked = true; break;
+                        }
+                    }
+                    if (blocked) {
+                        v.setX(savedX); v.setY(savedY); v.setTurnT(savedT);
+                        v.setSpeed(0);
+                        v.incTurnBlockedTicks();
+                    } else {
+                        v.resetTurnBlockedTicks();
+                    }
+                } else {
+                    v.resetTurnBlockedTicks();
+                }
+                continue;
+            }
             boolean lightAllows = canVehicleGo(v);
 
             // Đã xóa khối lệnh snapToStopLine ở đây để chống lỗi xe nhảy cóc đè lên nhau

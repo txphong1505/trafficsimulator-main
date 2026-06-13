@@ -30,8 +30,9 @@ public abstract class Vehicle {
     // ── Smooth-turn Bézier state ────────────────────────────────────────────
     // Position and angle follow a quadratic Bézier B(t) = (1-t)²P0 + 2t(1-t)P1 + t²P2.
     // Physics (hitbox, getBodyWidth/Height) are NEVER modified during a turn.
-    private boolean   isTurning   = false;
-    private double    turnT       = 0;          // curve parameter [0 .. 1]
+    private boolean   isTurning        = false;
+    private double    turnT            = 0;      // curve parameter [0 .. 1]
+    private int       turnBlockedTicks = 0;      // consecutive ticks the collision guard fired
     private double    turnP0x, turnP0y;         // start point
     private double    turnP1x, turnP1y;         // control point (corner tangent)
     private double    turnP2x, turnP2y;         // end point (exit lane)
@@ -230,8 +231,9 @@ public abstract class Vehicle {
                           double p1x, double p1y,
                           double p2x, double p2y,
                           Direction exitDir) {
-        isTurning   = true;
-        turnT       = 0;
+        isTurning        = true;
+        turnT            = 0;
+        turnBlockedTicks = 0;
         turnP0x = p0x; turnP0y = p0y;
         turnP1x = p1x; turnP1y = p1y;
         turnP2x = p2x; turnP2y = p2y;
@@ -247,22 +249,45 @@ public abstract class Vehicle {
     }
 
     /**
-     * Advance the Bézier curve by one simulation tick at {@link #originalSpeed}.
+     * Advance the Bézier curve by one simulation tick.
+     * <p>
+     * Uses <em>constant-speed arc-length parameterisation</em>: the t-increment is
+     * computed as {@code dt = originalSpeed / |B'(t)|} at the <em>current</em> t,
+     * so the Euclidean distance traveled this tick equals exactly
+     * {@code originalSpeed} pixels — eliminating the visual acceleration that the
+     * old constant-dt scheme produced.
      *
      * @return {@code true} when the turn has completed.
      */
     public boolean advanceTurn() {
         if (!isTurning) return true;
-        turnT = Math.min(1.0, turnT + originalSpeed / turnArcLen);
+
+        // ── Constant-speed arc-length parameterisation ─────────────────────────
+        // Compute the tangent vector B'(t) = 2(1-t)(P1-P0) + 2t(P2-P1) at the
+        // CURRENT t, derive its length, then set dt = speed / |B'(t)|.
+        // This guarantees: actual_pixels_per_tick = |B'(t)| * dt = speed.  (exact)
         double t = turnT, u = 1 - t;
+        double dtx = 2*u*(turnP1x - turnP0x) + 2*t*(turnP2x - turnP1x);
+        double dty = 2*u*(turnP1y - turnP0y) + 2*t*(turnP2y - turnP1y);
+        double tangentLen = Math.hypot(dtx, dty);
+        // Guard: if tangent collapses (near-degenerate segment), fall back to the
+        // precomputed arc-length estimate to avoid dt → ∞.
+        double dt = (tangentLen > 0.5) ? originalSpeed / tangentLen
+                                       : originalSpeed / turnArcLen;
+
+        turnT = Math.min(1.0, turnT + dt);
+        t = turnT; u = 1 - t;
+
         // Position on the quadratic Bézier.
         x = u*u*turnP0x + 2*u*t*turnP1x + t*t*turnP2x;
         y = u*u*turnP0y + 2*u*t*turnP1y + t*t*turnP2y;
-        // Tangent direction → continuous render angle.
-        double dx = 2*u*(turnP1x - turnP0x) + 2*t*(turnP2x - turnP1x);
-        double dy = 2*u*(turnP1y - turnP0y) + 2*t*(turnP2y - turnP1y);
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5)
-            turnAngle = Math.atan2(dy, dx) + Math.PI / 2;
+
+        // Tangent direction at the new t → continuous render angle.
+        dtx = 2*u*(turnP1x - turnP0x) + 2*t*(turnP2x - turnP1x);
+        dty = 2*u*(turnP1y - turnP0y) + 2*t*(turnP2y - turnP1y);
+        if (Math.abs(dtx) > 0.5 || Math.abs(dty) > 0.5)
+            turnAngle = Math.atan2(dty, dtx) + Math.PI / 2;
+
         // Finalise when curve is complete.
         if (turnT >= 1.0) {
             isTurning = false;
@@ -274,7 +299,12 @@ public abstract class Vehicle {
         return false;
     }
 
-    public boolean isTurning() { return isTurning; }
+    public boolean isTurning()        { return isTurning; }
+    public double  getTurnT()         { return turnT;     }
+    public void    setTurnT(double t) { turnT = t;        }
+    public int     getTurnBlockedTicks()    { return turnBlockedTicks;  }
+    public void    incTurnBlockedTicks()    { turnBlockedTicks++;       }
+    public void    resetTurnBlockedTicks()  { turnBlockedTicks = 0;     }
 
     /** 16-segment numerical arc-length estimate for a quadratic Bézier. */
     private static double bezierArcLen(double p0x, double p0y,
