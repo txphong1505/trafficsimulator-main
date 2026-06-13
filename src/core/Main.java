@@ -237,6 +237,11 @@ public class Main extends JPanel implements ActionListener {
             inter.light.update();
 
         double spawnRate = highTraffic ? 0.06 : 0.03;
+
+        if (currentMapMode != MapMode.TONG_HOP) {
+            spawnRate *= 0.6;
+        }
+
         if (Math.random() < spawnRate)
             controller.spawnVehicle();
         controller.updateAll();

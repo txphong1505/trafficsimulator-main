@@ -164,7 +164,20 @@ public class TrafficController {
         if (newV != null) {
             newV.setDriverStrategy(getStrategyForVehicle(newV));
             if (dir == Direction.NORTH && inter.type.equals("3way")) {
-                newV.setTurnIntent(new Random().nextBoolean() ? "LEFT" : "RIGHT");
+                if (Math.abs(spawnX - getNorthSlowX(inter)) < 5) {
+                    newV.setTurnIntent("RIGHT");
+                } else {
+                    newV.setTurnIntent("LEFT"); // Ngã 3 (chữ T) bắt buộc rẽ trái/phải
+                }
+            } else if (dir == Direction.SOUTH && inter.type.equals("4way")) {
+                if (Math.abs(spawnX - getSouthSlowX(inter)) < 5) {
+                    newV.setTurnIntent("RIGHT");
+                } else {
+                    boolean isEmg = newV.getName().equals("Ambu") || newV.getName().equals("Fire");
+                    if (!isEmg) {
+                        newV.setTurnIntent("STRAIGHT");
+                    }
+                }
             }
             vehicles.add(newV);
         }
@@ -274,7 +287,18 @@ public class TrafficController {
     // =======================================================================================
 
     public void executeTurn(Vehicle v) {
-        v.setWaitingToTurn(false);
+        // Reset the waiting flag only for vehicles that are not currently sitting
+        // inside an intersection entry zone.  Vehicles that were stopped by
+        // isTurnSafe() keep waitingToTurn=true until this method's own inEntry
+        // block re-evaluates and explicitly clears the flag when it is safe to
+        // proceed.  The old unconditional clear caused a one-tick window where the
+        // stopped vehicle appeared free-to-move to checkSafeDistance.
+        if (v.isWaitingToTurn()) {
+            // Leave waitingToTurn as-is; the inEntry block below will clear it
+            // when isTurnSafe() passes, or leave it set for another tick.
+        } else {
+            v.setWaitingToTurn(false);
+        }
         // ── 5-way diagonal turns (EAST→NE keep snap; SW→EXIT now smooth) ────────
         for (Intersection inter : intersections) {
             if (inter.type.equals("5way")) {
@@ -323,10 +347,50 @@ public class TrafficController {
             if (v.hasTurned() || v.isTurning())
                 break;
 
-            if (v.getDirection() == Direction.NORTH && inter.type.equals("3way")
-                    && v.getTurnIntent().equals("STRAIGHT")) {
+            if (v.getDirection() == Direction.NORTH && inter.type.equals("3way")) {
                 if (v.getX() >= inter.x && v.getX() <= inter.x + roadWidth) {
-                    v.setTurnIntent(new Random().nextBoolean() ? "LEFT" : "RIGHT");
+                    if (Math.abs(v.getX() - getNorthSlowX(inter)) < 5) {
+                        boolean isCongested = false;
+                        Intersection ngaTu = intersections.stream().filter(i -> i.type.equals("4way")).findFirst().orElse(null);
+                        if (ngaTu != null) {
+                            for (Vehicle other : vehicles) {
+                                if (other.getDirection() == Direction.EAST &&
+                                        (other.getY() == EAST_LANE_SLOW || other.getY() == EAST_LANE_FAST)) {
+                                    if (other.getX() > inter.x + roadWidth && other.getX() < ngaTu.x) {
+                                        isCongested = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        v.setTurnIntent(isCongested ? "LEFT" : "RIGHT");
+                    } else {
+                        v.setTurnIntent("LEFT");
+                    }
+                }
+            }
+
+            if (v.getDirection() == Direction.SOUTH && inter.type.equals("4way")) {
+                if (v.getX() >= inter.x && v.getX() <= inter.x + roadWidth) {
+                    if (Math.abs(v.getX() - getSouthSlowX(inter)) < 5) {
+                        boolean isCongested = false;
+                        Intersection ngaBa = intersections.stream().filter(i -> i.type.equals("3way")).findFirst().orElse(null);
+                        if (ngaBa != null) {
+                            for (Vehicle other : vehicles) {
+                                if (other.getDirection() == Direction.WEST &&
+                                        (other.getY() == WEST_LANE_SLOW || other.getY() == WEST_LANE_FAST)) {
+                                    if (other.getX() > ngaBa.x + roadWidth && other.getX() < inter.x) {
+                                        isCongested = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        v.setTurnIntent(isCongested ? "STRAIGHT" : "RIGHT");
+                    } else {
+                        boolean isEmg = v.getName().equals("Ambu") || v.getName().equals("Fire");
+                        if (!isEmg) {
+                            v.setTurnIntent("STRAIGHT");
+                        }
+                    }
                 }
             }
 
@@ -540,8 +604,14 @@ public class TrafficController {
                 if (!vEmg && oEmg)
                     return false;
 
-                // XỬ LÝ LỖI ĐÂM XUYÊN: Dựa vào hướng di chuyển để biết ai đi sau thì người đó
-                // phải nhường
+                // A turning vehicle's direction field still holds the pre-turn direction
+                // while the arc is active.  Comparing directions produces wrong yield
+                // decisions because the vehicle's physical position is already off its
+                // original axis.  Stop the straight-mover unconditionally so it does not
+                // drive into the arc space.
+                if (other.isTurning() && !currentV.isTurning())
+                    return false;
+
                 if (currentV.getDirection() == other.getDirection()) {
                     boolean amIBehind = false;
                     switch (currentV.getDirection()) {
@@ -565,15 +635,12 @@ public class TrafficController {
                             break;
                     }
                     if (amIBehind)
-                        return false; // Nếu đi sau, bắt buộc phải dừng
-
-                    // Nếu lỡ trùng cả tọa độ, dùng HashCode phá bế tắc (1 xe đi, 1 xe đứng)
-                    if (currentV.getX() == other.getX() && currentV.getY() == other.getY()) {
-                        if (System.identityHashCode(currentV) < System.identityHashCode(other))
-                            return false;
-                    }
+                        return false;
+                    // Hitboxes already overlap and neither is nominally behind the
+                    // other: both claim to be ahead, which is a degenerate overlap.
+                    // Block unconditionally so no vehicle inches forward.
+                    return false;
                 } else {
-                    // Nếu là 2 luồng cắt ngang nhau, dùng HashCode nhường ngẫu nhiên
                     if (System.identityHashCode(currentV) < System.identityHashCode(other))
                         return false;
                 }
@@ -607,15 +674,14 @@ public class TrafficController {
                         break;
                 }
 
-                // Lateral guard: if the other vehicle is predominantly beside us (perpendicular
-                // distance >> forward distance), it is in an adjacent lane, not blocking our
-                // path.
-                // Lateral component = total displacement minus the forward projection.
                 double forwardProjection = dx * vx + dy * vy;
                 double lateralDx = dx - forwardProjection * vx;
                 double lateralDy = dy - forwardProjection * vy;
                 double lateralDist = Math.sqrt(lateralDx * lateralDx + lateralDy * lateralDy);
-                if (lateralDist > 28)
+                // A turning vehicle sweeps across lanes during its arc; the lateral
+                // guard would incorrectly exempt it from blocking after the straight
+                // vehicle changes lanes. Skip the lateral filter for arcing vehicles.
+                if (!other.isTurning() && lateralDist > 28)
                     continue;
 
                 if (forwardProjection > -0.1) {
@@ -655,6 +721,18 @@ public class TrafficController {
         Direction d = currentV.getDirection();
         if (d == Direction.NORTHEAST || d == Direction.SOUTHWEST)
             return;
+        // Do not lane-change past a turning vehicle. A lane change only
+        // moves this vehicle sideways; the arc body stays in the forward
+        // path and the lateral-distance guard in checkSafeDistance would
+        // then exempt the arc from the predRect check, letting the mover
+        // advance directly into it.
+        Rectangle ahead = currentV.getPredictedHitbox(120);
+        for (Vehicle other : vehicles) {
+            if (other != currentV && other.isTurning()
+                    && ahead.intersects(other.getHitbox())) {
+                return;
+            }
+        }
         boolean isEmg = currentV.getName().equals("Ambu") || currentV.getName().equals("Fire");
         Double targetY = null, targetX = null;
 
@@ -1012,17 +1090,19 @@ public class TrafficController {
                     Rectangle myHitbox = v.getHitbox();
                     boolean blocked = false;
                     for (Vehicle other : vehicles) {
-                        if (other == v || other.isTurning()) continue;
+                        if (other == v) continue;
+                        // Two arcing vehicles that are both deadlocked (>= 20 blocked ticks
+                        // each) are allowed to phase through each other to break the stall.
+                        // In all other cases, turning vehicles ARE checked against each other
+                        // so that simultaneous arcs cannot occupy the same physical space.
+                        if (other.isTurning() && other.getTurnBlockedTicks() >= 20
+                                && v.getTurnBlockedTicks() >= 20) continue;
                         if (myHitbox.intersects(other.getShrinkHitbox(2))) {
                             blocked = true; break;
                         }
                     }
                     if (blocked) {
-                        // Guard fires: revert arc position.
                         v.setX(savedX); v.setY(savedY); v.setTurnT(savedT);
-                        // FIX-1: speed=0 makes this vehicle invisible to isTurnSafe →
-                        // vehicles queued behind can attempt their own turns without
-                        // waiting indefinitely for this one to clear the intersection.
                         v.setSpeed(0);
                         v.incTurnBlockedTicks();
                     } else {
@@ -1040,8 +1120,14 @@ public class TrafficController {
                     boolean inApproachZone = (v.getX() > inter.x - 200 && v.getX() < inter.x + roadWidth + 200 &&
                             v.getY() > roadStartY - 200 && v.getY() < roadStartY + roadWidth + 200);
                     if (inApproachZone) {
-                        if (v.getTurnIntent().equals("LEFT"))
-                            v.setTurnIntent("STRAIGHT");
+                        if (v.getTurnIntent().equals("LEFT")) {
+                            boolean isEmg = v.getName().equals("Ambu") || v.getName().equals("Fire");
+
+                            // Chỉ ngoại lệ rẽ trái cho xe khẩn cấp và đường chéo SOUTHWEST
+                            if (!isEmg && v.getDirection() != Direction.SOUTHWEST) {
+                                v.setTurnIntent("STRAIGHT");
+                            }
+                        }
                         if (inter.type.equals("5way") && v.getTurnIntent().equals("DIAGONAL")
                                 && v.getDirection() != Direction.SOUTHWEST)
                             v.setTurnIntent("STRAIGHT");
@@ -1062,7 +1148,9 @@ public class TrafficController {
                     Rectangle myHitbox = v.getHitbox();
                     boolean blocked = false;
                     for (Vehicle other : vehicles) {
-                        if (other == v || other.isTurning()) continue;
+                        if (other == v) continue;
+                        if (other.isTurning() && other.getTurnBlockedTicks() >= 20
+                                && v.getTurnBlockedTicks() >= 20) continue;
                         if (myHitbox.intersects(other.getShrinkHitbox(2))) {
                             blocked = true; break;
                         }
