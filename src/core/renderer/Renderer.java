@@ -340,7 +340,15 @@ public class Renderer {
                             px = inter.x + roadWidth + 20; py = roadStartY - 110;
                         }
                         break;
-                    case SOUTH: px = inter.x - 50; py = roadStartY - 110; break;
+                    case SOUTH:
+                        if (inter.type.equals("3way")) {
+                            px = inter.x + roadWidth + 20;
+                            py = roadStartY + roadWidth + 25;
+                        } else {
+                            px = inter.x - 50;
+                            py = roadStartY - 110;
+                        }
+                        break;
                     case NORTH: px = inter.x + roadWidth + 20; py = roadStartY + roadWidth + 25; break;
                     case SOUTHWEST:
                         px = inter.x + roadWidth + 20;
